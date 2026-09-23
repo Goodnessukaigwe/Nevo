@@ -938,3 +938,26 @@ fn test_refund_after_grace_period_succeeds() {
     let contribution = client.get_contribution(&pool_id, &donor);
     assert_eq!(contribution, 0u128);
 }
+#[test]
+fn test_has_applied() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Scholarship Pool"),
+        &String::from_str(&env, "Educational funding"),
+        &100_000_000u128,
+        &200_000u64,
+    );
+
+    assert!(!client.has_applied(&pool_id, &student));
+
+    client.apply_to_pool(&pool_id, &student, &String::from_str(&env, "app"));
+
+    assert!(client.has_applied(&pool_id, &student));
+}

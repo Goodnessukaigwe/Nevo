@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Pool, PoolStatus } from './pool.entity.js';
@@ -19,6 +20,7 @@ export class PoolsService {
     @InjectRepository(Pool)
     private readonly poolRepo: Repository<Pool>,
     private readonly contractService: ContractService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -187,8 +189,13 @@ export class PoolsService {
   }
 
   buildWithdrawTx(pool: Pool): { unsignedXdr: string; poolId: string } {
-    // TODO: replace with real Stellar transaction build calling contract.withdraw (#657)
-    return { unsignedXdr: 'placeholder_xdr', poolId: pool.contractPoolId };
+    const tokenAddress = this.config.getOrThrow<string>('TOKEN_ADDRESS');
+    const unsignedXdr = this.contractService.buildWithdrawTransaction(
+      pool.creatorWallet,
+      parseInt(pool.contractPoolId, 10),
+      tokenAddress,
+    );
+    return { unsignedXdr, poolId: pool.contractPoolId };
   }
 
   buildClosePoolTx(pool: Pool): { unsignedXdr: string } {
