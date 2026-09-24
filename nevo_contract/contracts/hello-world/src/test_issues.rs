@@ -1401,3 +1401,182 @@ fn test_last_donation_at_updates_to_current_ledger_timestamp() {
         "last_donation_at must update to the new ledger timestamp on the next contribution"
     );
 }
+
+// ============= ISSUE #1301: STRESS TESTS FOR MULTIPLE CONCURRENT CAMPAIGNS =============
+//
+// Items 4 and 5 ("performance remains acceptable" / "memory usage
+// reasonable") are backed by soroban-sdk's real invocation cost metering
+// (env.cost_estimate().resources()), not a fabricated timer or byte count.
+// Env::default() enables this metering and enforces
+// InvocationResourceLimits::mainnet() per top-level call automatically (SDK
+// 27.0.6 / soroban-env-host 27.0.1, confirmed against the vendored source and
+// matching this repo's pinned Cargo.lock) -- if any single create_pool call
+// ever exceeded the real mainnet instruction/memory ceiling, that call would
+// already panic before these assertions run. Naming the limit type itself
+// (InvocationResourceLimits) would require adding soroban-env-host as a
+// direct dependency, which this contract doesn't have, so these tests assert
+// on the real recorded per-call cost being live and nonzero rather than
+// duplicating the SDK's own enforced ceiling.
+
+/// Test 1: Creating 100 campaigns succeeds.
+#[test]
+fn test_stress_create_100_campaigns_succeeds() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+
+    for i in 0..100u32 {
+        let pool_id = client.create_pool(
+            &creator,
+            &String::from_str(&env, "Campaign"),
+            &String::from_str(&env, "Desc"),
+            &((i as u128 + 1) * 1_000_000u128),
+            &100_000u64,
+        );
+        assert_eq!(pool_id, i + 1);
+    }
+
+    assert_eq!(client.get_pool_count(), 100);
+}
+
+/// Test 2: All 100 campaigns are tracked by get_all_campaigns, with no cap
+/// or truncation (it's a derived 1..=pool_count range, not a stored list).
+#[test]
+fn test_stress_get_all_campaigns_returns_all_100() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+
+    for i in 0..100u32 {
+        client.create_pool(
+            &creator,
+            &String::from_str(&env, "Campaign"),
+            &String::from_str(&env, "Desc"),
+            &((i as u128 + 1) * 1_000_000u128),
+            &100_000u64,
+        );
+    }
+
+    let all = client.get_all_campaigns();
+    assert_eq!(all.len(), 100);
+    for i in 0..100u32 {
+        assert_eq!(all.get(i).unwrap(), i + 1);
+    }
+}
+
+/// Test 3: Donation tracking is independent per campaign at scale -- 50
+/// pools, each donated to with a distinct amount, none affecting another's
+/// total raised or donor count.
+#[test]
+fn test_stress_independent_donation_tracking_across_many_pools() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+
+    const COUNT: u32 = 50;
+    for _ in 0..COUNT {
+        client.create_pool(
+            &creator,
+            &String::from_str(&env, "Campaign"),
+            &String::from_str(&env, "Desc"),
+            &10_000_000u128,
+            &100_000u64,
+        );
+    }
+
+    // Donate a distinct amount to each pool, one distinct donor per pool.
+    for i in 1..=COUNT {
+        let donor = Address::generate(&env);
+        let amount = (i as u128) * 100_000u128;
+        client.donate(&i, &donor, &amount);
+    }
+
+    // Every pool's total raised and donor count must reflect only its own
+    // donation, unaffected by any of the other 49 pools.
+    for i in 1..=COUNT {
+        let expected_amount = (i as u128) * 100_000u128;
+        assert_eq!(client.get_total_raised(&i), expected_amount);
+        assert_eq!(client.get_donor_count(&i), 1);
+    }
+}
+
+/// Test 4 (issue item 4, "performance remains acceptable"): each of the 100
+/// create_pool invocations is metered via the SDK's real invocation cost
+/// estimate, and the recorded CPU-instruction count is live (nonzero) for
+/// every call, not silently unmetered. All 100 calls completing at all
+/// already proves none exceeded Soroban's automatically-enforced mainnet
+/// instruction limit.
+#[test]
+fn test_stress_100_campaigns_cpu_instructions_metered() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let mut total_instructions: i64 = 0;
+
+    for i in 0..100u32 {
+        client.create_pool(
+            &creator,
+            &String::from_str(&env, "Campaign"),
+            &String::from_str(&env, "Desc"),
+            &((i as u128 + 1) * 1_000_000u128),
+            &100_000u64,
+        );
+
+        let resources = env.cost_estimate().resources();
+        assert!(
+            resources.instructions > 0,
+            "create_pool call {} reported {} instructions; metering should be live",
+            i,
+            resources.instructions
+        );
+        total_instructions += resources.instructions;
+    }
+
+    assert_eq!(client.get_pool_count(), 100);
+    assert!(total_instructions > 0);
+}
+
+/// Test 5 (issue item 5, "memory usage reasonable"): same real metering as
+/// test 4, checking the recorded memory-byte cost of each call instead of
+/// instructions. All 100 calls completing already proves none exceeded
+/// Soroban's automatically-enforced mainnet memory limit.
+#[test]
+fn test_stress_100_campaigns_memory_bytes_metered() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let mut total_mem_bytes: i64 = 0;
+
+    for i in 0..100u32 {
+        client.create_pool(
+            &creator,
+            &String::from_str(&env, "Campaign"),
+            &String::from_str(&env, "Desc"),
+            &((i as u128 + 1) * 1_000_000u128),
+            &100_000u64,
+        );
+
+        let resources = env.cost_estimate().resources();
+        assert!(
+            resources.mem_bytes > 0,
+            "create_pool call {} reported {} mem_bytes; metering should be live",
+            i,
+            resources.mem_bytes
+        );
+        total_mem_bytes += resources.mem_bytes;
+    }
+
+    assert_eq!(client.get_pool_count(), 100);
+    assert!(total_mem_bytes > 0);
+}
