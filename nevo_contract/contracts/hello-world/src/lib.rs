@@ -340,8 +340,17 @@ impl Contract {
         goal: u128,
         application_deadline: u64,
     ) -> u32 {
+        if title.len() == 0 {
+            panic!("Title cannot be empty");
+        }
+        if description.len() == 0 {
+            panic!("Description cannot be empty");
+        }
         if description.len() as u32 > MAX_DESCRIPTION_LENGTH as u32 {
             panic!("Description exceeds maximum length");
+        }
+        if application_deadline == 0 {
+            panic!("Duration must be greater than zero");
         }
 
         let pool_count_key = Symbol::new(&env, POOL_COUNT);
@@ -354,7 +363,7 @@ impl Contract {
         let pool_id = pool_count + 1;
         pool_count = pool_id;
 
-        let metadata_key = (Symbol::new(&env, SAVED_METADATA_PREFIX), pool_id);
+        let metadata_key = (Symbol::new(&env, "metadata"), pool_id);
         env.storage()
             .persistent()
             .set(&metadata_key, &(title.clone(), description.clone()));
@@ -416,13 +425,15 @@ impl Contract {
         pool_id
     }
 
-    /// Save mutable pool metadata after the pool has been created.
+    /// Save mutable pool metadata and its multi-signature configuration.
     pub fn save_pool(
         env: Env,
         pool_id: u32,
         description: String,
         url: String,
         image_hash: String,
+        required_signatures: u32,
+        signers: Vec<Address>,
     ) {
         let pool: Pool = env
             .storage()
@@ -442,10 +453,46 @@ impl Contract {
             panic!("Image hash exceeds maximum length");
         }
 
+        if signers.is_empty() {
+            panic!("Empty signers list");
+        }
+        if required_signatures == 0 {
+            panic!("Zero required_signatures");
+        }
+        if required_signatures > signers.len() {
+            panic!("required_signatures exceeds signer count");
+        }
+        let signer_count = signers.len();
+        let mut i = 0u32;
+        while i < signer_count {
+            let mut j = i + 1;
+            while j < signer_count {
+                if signers.get(i).unwrap() == signers.get(j).unwrap() {
+                    panic!("Mismatched multi-signature parameters");
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+
         let metadata_key = (Symbol::new(&env, SAVED_METADATA_PREFIX), pool_id);
         env.storage()
             .persistent()
             .set(&metadata_key, &(description, url, image_hash));
+
+        let signers_key = (Symbol::new(&env, "pool_signers"), pool_id);
+        env.storage()
+            .persistent()
+            .set(&signers_key, &(required_signatures, signers));
+    }
+
+    /// Return the multi-signature threshold and signer list saved for a pool.
+    pub fn get_pool_signers(env: Env, pool_id: u32) -> (u32, Vec<Address>) {
+        let signers_key = (Symbol::new(&env, "pool_signers"), pool_id);
+        env.storage()
+            .persistent()
+            .get(&(signers_key))
+            .unwrap_or_else(|| (0u32, Vec::new(&env)))
     }
 
     /// Configure the token accepted by token-backed donations for a pool.
@@ -497,16 +544,6 @@ impl Contract {
             ..pool
         };
         env.storage().persistent().set(&pool_id, &updated_pool);
-
-        let donor_index: u32 = env
-            .storage()
-            .persistent()
-            .get::<_, u32>(&(pool_id, "d_count"))
-            .unwrap_or(0);
-        let _ = donor;
-        env.storage()
-            .persistent()
-            .set(&(pool_id, "d_count"), &(donor_index + 1));
 
         // Emit donation event
         env.events().publish(
@@ -649,6 +686,20 @@ impl Contract {
             (POOL_CLOSED, pool_id),
             (updated_pool.sponsor.clone(), updated_pool.collected),
         );
+    }
+
+    /// Return campaign ids in creation order.
+    pub fn get_all_campaigns(env: Env) -> Vec<u32> {
+        let count = Self::get_pool_count(env.clone());
+        let mut campaigns = Vec::new(&env);
+        let mut id = 1u32;
+        while id <= count {
+            if env.storage().persistent().has(&id) {
+                campaigns.push_back(id);
+            }
+            id += 1;
+        }
+        campaigns
     }
 
     /// Get the total number of pools.
@@ -1171,13 +1222,13 @@ impl Contract {
             .storage()
             .persistent()
             .get::<_, Address>(&admin_key)
-            .expect("Admin not set");
+            .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
         if stored_admin != admin {
-            panic!("Unauthorized admin");
+            env.panic_with_error(ContractError::UnauthorizedAdmin);
         }
 
         if fee < 0 {
-            panic!("InvalidFee");
+            env.panic_with_error(ContractError::InvalidFee);
         }
 
         let fee_key = Symbol::new(&env, CREATION_FEE_KEY);
@@ -1370,15 +1421,6 @@ impl Contract {
         };
         env.storage().persistent().set(&pool_id, &updated_pool);
 
-        let donor_index: u32 = env
-            .storage()
-            .persistent()
-            .get::<_, u32>(&(pool_id, "d_count"))
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&(pool_id, "d_count"), &(donor_index + 1));
-
         // Emit contribution event with privacy flag (true = private donation)
         env.events().publish(
             (CONTRIBUTION, pool_id),
@@ -1528,3 +1570,4 @@ mod test_pool_creation;
 mod test_pool_retrieval;
 mod test_campaign_lifecycle;
 mod test_withdraw;
+mod test_issue_1287_pool_multisig;
