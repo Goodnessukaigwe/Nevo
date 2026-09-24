@@ -152,24 +152,21 @@ fn test_create_pool_metadata_stored() {
     assert_eq!(stored_desc, description);
 }
 
-/// Test 7: Pool with zero goal can be created
+/// Test 7: Pool with zero goal is rejected
 #[test]
+#[should_panic(expected = "Error(Contract, #17)")]
 fn test_create_pool_zero_goal() {
     let env = Env::default();
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
 
-    let creator = Address::generate(&env);
-    let pool_id = client.create_pool(
-        &creator,
+    client.create_pool(
+        &Address::generate(&env),
         &String::from_str(&env, "Zero Goal Pool"),
         &String::from_str(&env, "Testing zero goal"),
         &0u128,
         &100_000u64,
     );
-
-    let pool = client.get_pool(&pool_id);
-    assert_eq!(pool.2, 0u128);
 }
 
 /// Test 8: Maximum description length (500) is accepted
@@ -241,7 +238,7 @@ fn test_create_pool_pool_count_tracks_total() {
 
 /// Test 11: Invalid config with empty title fails validation
 #[test]
-#[should_panic(expected = "Title cannot be empty")]
+#[should_panic(expected = "Error(Contract, #16)")]
 fn test_create_pool_invalid_empty_title() {
     let env = Env::default();
     let contract_id = env.register(Contract, ());
