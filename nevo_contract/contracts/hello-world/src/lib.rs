@@ -52,6 +52,7 @@ const UNCLAIMED_FEES: &str = "unclaimed_fees";
 
 // Creation fee key - stores the fee charged when creating a new pool
 const CREATION_FEE_KEY: &str = "creation_fee";
+const CROWDFUNDING_TOKEN_KEY: &str = "crowdfunding_token";
 
 // Refund deadline constants
 // Donors may request a refund only after the pool deadline has passed AND
@@ -86,6 +87,8 @@ const POOL_STATE_SET: Symbol = symbol_short!("pool_stat");
 const ADMIN_SET: Symbol = symbol_short!("admin_set");
 // Issue #954: shared constant replacing inline Symbol::new(&env, "creation_fee_updated")
 const FEE_UPDATED: Symbol = symbol_short!("fee_upd");
+const CROWDFUNDING_TOKEN_SET: Symbol = symbol_short!("tok_set");
+const FEE_PAID: Symbol = symbol_short!("fee_paid");
 
 // ─── Typed Error Enum (Issue #955) ───────────────────────────────────────
 
@@ -1573,6 +1576,123 @@ impl Contract {
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.goal
+    }
+
+    /// Create a new donation / sponsorship pool with creation fee deduction.
+    ///
+    /// If creation fee > 0, fee is transferred from `creator` to the contract and
+    /// a `creation_fee_paid` event is emitted.
+    /// If creation fee == 0, creation proceeds without token transfer or balance checks.
+    pub fn create_pool_with_fee(
+        env: Env,
+        creator: Address,
+        title: String,
+        description: String,
+        goal: u128,
+        application_deadline: u64,
+        fee_token: Address,
+    ) -> u32 {
+        creator.require_auth();
+
+        let fee = Self::get_creation_fee(env.clone());
+        if fee > 0 {
+            let token_client = token::Client::new(&env, &fee_token);
+            token_client.transfer(&creator, &env.current_contract_address(), &fee);
+
+            // Accumulate unclaimed fees
+            let unclaimed_key = Symbol::new(&env, UNCLAIMED_FEES);
+            let current_unclaimed: i128 = env
+                .storage()
+                .persistent()
+                .get::<_, i128>(&unclaimed_key)
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&unclaimed_key, &(current_unclaimed + fee));
+
+            // Emit fee payment events
+            env.events().publish(
+                (Symbol::new(&env, "creation_fee_paid"), creator.clone()),
+                fee,
+            );
+            env.events().publish((FEE_PAID,), (creator.clone(), fee));
+        }
+
+        Self::create_pool(
+            env,
+            creator,
+            title,
+            description,
+            goal,
+            application_deadline,
+        )
+    }
+
+    /// Alias for `create_pool_with_fee`.
+    pub fn create_campaign_with_fee(
+        env: Env,
+        creator: Address,
+        title: String,
+        description: String,
+        goal: u128,
+        application_deadline: u64,
+        fee_token: Address,
+    ) -> u32 {
+        Self::create_pool_with_fee(
+            env,
+            creator,
+            title,
+            description,
+            goal,
+            application_deadline,
+            fee_token,
+        )
+    }
+
+    /// Configure the global crowdfunding token.
+    ///
+    /// # Authorization
+    /// Only the currently configured admin may call this.
+    ///
+    /// # Panics
+    /// - `ContractError::AdminNotSet` if no admin has been configured
+    /// - `ContractError::UnauthorizedAdmin` if `admin` does not match the stored admin
+    /// - `"InvalidTokenAddress"` if token address is invalid (e.g. contract's own address)
+    pub fn set_crowdfunding_token(env: Env, admin: Address, token: Address) {
+        admin.require_auth();
+
+        let admin_key = Symbol::new(&env, ADMIN_KEY);
+        let stored_admin: Address = env
+            .storage()
+            .persistent()
+            .get::<_, Address>(&admin_key)
+            .unwrap_or_else(|| env.panic_with_error(ContractError::AdminNotSet));
+        if stored_admin != admin {
+            env.panic_with_error(ContractError::UnauthorizedAdmin);
+        }
+
+        if token == env.current_contract_address() {
+            panic!("InvalidTokenAddress");
+        }
+
+        let token_key = Symbol::new(&env, CROWDFUNDING_TOKEN_KEY);
+        env.storage().persistent().set(&token_key, &token);
+
+        // Emit events
+        env.events().publish((CROWDFUNDING_TOKEN_SET,), token.clone());
+        env.events().publish(
+            (Symbol::new(&env, "crowdfunding_token_set"), admin),
+            token,
+        );
+    }
+
+    /// Get the currently configured global crowdfunding token.
+    pub fn get_crowdfunding_token(env: Env) -> Address {
+        let token_key = Symbol::new(&env, CROWDFUNDING_TOKEN_KEY);
+        env.storage()
+            .persistent()
+            .get::<_, Address>(&token_key)
+            .expect("Crowdfunding token not set")
     }
 }
 
