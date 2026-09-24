@@ -1729,3 +1729,7 @@ mod test_issue_1316_configuration_bounds;
 mod test_issue_1315_data_persistence;
 mod test_issue_1314_cross_contract;
 mod test_issue_1313_gas_optimization;
+mod test_issue_1340_set_admin_reassignment;
+mod test_issue_1343_claimed_amount_running_total;
+mod test_issue_1339_pool_school_association;
+mod test_issue_1291_donation_token_validation;
