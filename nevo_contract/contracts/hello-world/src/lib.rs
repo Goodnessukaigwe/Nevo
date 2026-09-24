@@ -901,6 +901,12 @@ impl Contract {
             .unwrap_or(String::from_str(&env, ""))
     }
 
+    /// Returns true if the student has already applied to the given pool.
+    pub fn has_applied(env: Env, pool_id: u32, student: Address) -> bool {
+        let applicant_key = (Symbol::new(&env, APPLICANT_PREFIX), pool_id, student);
+        env.storage().persistent().has(&applicant_key)
+    }
+
     /// Get claimed amount for a student in a pool.
     pub fn get_claimed_amount(env: Env, pool_id: u32, student: Address) -> i128 {
         let claimed_key = (
