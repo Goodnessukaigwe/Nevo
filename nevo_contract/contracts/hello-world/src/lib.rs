@@ -690,8 +690,12 @@ impl Contract {
     pub fn get_all_campaigns(env: Env) -> Vec<u32> {
         let count = Self::get_pool_count(env.clone());
         let mut list = Vec::new(&env);
-        for id in 1..=count {
-            list.push_back(id);
+        let mut id = 1u32;
+        while id <= count {
+            if env.storage().persistent().has(&id) {
+                list.push_back(id);
+            }
+            id += 1;
         }
         list
     }
@@ -1320,6 +1324,17 @@ impl Contract {
             env.panic_with_error(ContractError::PoolNotExpired);
         }
 
+        let token_key = (Symbol::new(&env, POOL_TOKEN_PREFIX), pool_id);
+        if let Some(expected_token) = env
+            .storage()
+            .persistent()
+            .get::<_, Address>(&token_key)
+        {
+            if expected_token != token_address {
+                panic!("TokenTransferFailed");
+            }
+        }
+
         let contrib_key = (pool_id, "contribution", &donor);
         let contribution: u128 = env
             .storage()
@@ -1572,6 +1587,8 @@ mod test_withdraw;
 mod test_pool_closure_state_validation;
 mod test_pool_closure_authorization;
 mod test_issue_1290_campaign_creation;
+mod test_token_address_validation;
+mod test_get_pool_count_sequencing;
 mod test_issue_1282_campaign_goal_getter;
 mod test_issue_1283_campaign_total_raised;
 mod test_issue_1316_configuration_bounds;
