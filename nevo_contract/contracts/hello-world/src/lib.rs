@@ -1574,3 +1574,4 @@ mod test_pool_closure_authorization;
 mod test_issue_1290_campaign_creation;
 mod test_issue_1282_campaign_goal_getter;
 mod test_issue_1283_campaign_total_raised;
+mod test_issue_1316_configuration_bounds;
