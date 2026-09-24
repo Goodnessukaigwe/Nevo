@@ -1723,3 +1723,4 @@ mod test_issue_1316_configuration_bounds;
 mod test_issue_1315_data_persistence;
 mod test_issue_1314_cross_contract;
 mod test_issue_1313_gas_optimization;
+mod test_issue_1340_set_admin_reassignment;
