@@ -1401,3 +1401,177 @@ fn test_last_donation_at_updates_to_current_ledger_timestamp() {
         "last_donation_at must update to the new ledger timestamp on the next contribution"
     );
 }
+
+// ============= ISSUE #1304: STORAGE KEY COLLISION PREVENTION =============
+//
+// Reinterpreted per investigation: there is no separate "campaign" entity --
+// `get_campaign_goal(campaign_id)` reads the exact same storage location as
+// `get_pool(pool_id)` (both key on a bare `pool_id: u32`), so item 1
+// ("campaign and pool IDs don't collide") is a same-entity confirmation, not
+// a real collision test -- there's only one ID space to begin with. Item 4
+// is reframed as what the contract's key scheme actually makes testable:
+// for one pool_id, do the ~17 differently-prefixed storage namespaces
+// (metadata, deadline, milestones, applications, etc.) and the bare Pool
+// entry itself all stay independent of each other.
+
+/// Test 1: "Campaign" and "pool" are the same entity sharing the same ID
+/// space -- get_campaign_goal(id) and get_pool(id).2 read the identical
+/// underlying storage entry, so there is nothing separate to collide with.
+#[test]
+fn test_campaign_and_pool_share_one_id_space() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let goal = 750_000_000u128;
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Campaign Pool"),
+        &String::from_str(&env, "Test"),
+        &goal,
+        &100_000u64,
+    );
+
+    // Same ID, read through the "campaign" getter and the "pool" getter.
+    assert_eq!(client.get_campaign_goal(&pool_id), goal);
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.2, goal);
+    assert_eq!(client.get_campaign_goal(&pool_id), pool.2);
+}
+
+/// Test 2: Contributions are tracked independently per (pool_id, donor) --
+/// the same donor contributing to two different pools doesn't leak either
+/// amount into the other pool's record for that donor.
+#[test]
+fn test_contributions_isolated_per_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let donor = Address::generate(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool A"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    let pool_b = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool B"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // Same donor, two different pools, two different amounts.
+    client.donate(&pool_a, &donor, &100_000_000u128);
+    client.donate(&pool_b, &donor, &250_000_000u128);
+
+    assert_eq!(client.get_contribution(&pool_a, &donor), 100_000_000u128);
+    assert_eq!(client.get_contribution(&pool_b, &donor), 250_000_000u128);
+}
+
+/// Test 3: Pool-level metrics (total raised, donor count) are stored
+/// independently per pool_id -- donating to one pool never moves the other
+/// pool's totals or donor count.
+#[test]
+fn test_pool_metrics_isolated_per_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool A"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    let pool_b = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool B"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    client.donate(&pool_a, &Address::generate(&env), &300_000_000u128);
+    client.donate(&pool_a, &Address::generate(&env), &200_000_000u128);
+    client.donate(&pool_b, &Address::generate(&env), &50_000_000u128);
+
+    assert_eq!(client.get_total_raised(&pool_a), 500_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_a), 2);
+
+    assert_eq!(client.get_total_raised(&pool_b), 50_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_b), 1);
+}
+
+/// Test 4: For one pool_id, every differently-prefixed storage namespace
+/// (the bare Pool entry, metadata, deadline, milestones, application status)
+/// stays independent -- writing to one never clobbers or is confused with
+/// another, even though they all share the same pool_id and, in the case of
+/// milestones/applications, the same student address too.
+#[test]
+fn test_state_keys_unique_across_namespaces_for_same_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let donor = Address::generate(&env);
+    let goal = 1_000_000_000u128;
+    let title = String::from_str(&env, "Namespace Pool");
+    let description = String::from_str(&env, "Test Description");
+
+    let pool_id = client.create_pool(&creator, &title, &description, &goal, &100_000u64);
+
+    // Write into several other pool_id-keyed namespaces for this same pool.
+    let deadline_ledger = env.ledger().sequence() + 1_000;
+    client.set_pool_deadline(&pool_id, &deadline_ledger);
+
+    client.apply_to_pool(&pool_id, &student, &String::from_str(&env, "My application"));
+
+    let milestones = Vec::from_array(
+        &env,
+        [Milestone { amount: 400_000_000u128 }, Milestone { amount: 600_000_000u128 }],
+    );
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+
+    client.donate(&pool_id, &donor, &123_000_000u128);
+
+    // Every namespace must independently reflect exactly what was written to
+    // it, none clobbered by the others sharing the same pool_id.
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.1, creator);
+    assert_eq!(pool.2, goal);
+    assert_eq!(pool.3, 123_000_000u128);
+
+    let (stored_title, stored_description) = client.get_pool_metadata(&pool_id);
+    assert_eq!(stored_title, title);
+    assert_eq!(stored_description, description);
+
+    assert_eq!(client.get_pool_deadline(&pool_id), deadline_ledger);
+
+    let stored_milestones = client.get_milestones(&pool_id, &student);
+    assert_eq!(stored_milestones, milestones);
+
+    assert_eq!(
+        client.get_application_status(&pool_id, &student),
+        String::from_str(&env, "Pending")
+    );
+
+    assert_eq!(client.get_contribution(&pool_id, &donor), 123_000_000u128);
+    assert_eq!(client.get_donor_count(&pool_id), 1);
+    assert_eq!(client.get_total_raised(&pool_id), 123_000_000u128);
+}
