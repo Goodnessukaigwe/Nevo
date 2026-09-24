@@ -625,6 +625,14 @@ impl Contract {
         pool.collected
     }
 
+    /// Get the campaign balance (total amount raised) for a pool.
+    ///
+    /// Issue #1269: Returns the total collected donation balance for the specified campaign.
+    /// Panics with `ContractError::PoolNotFound` if the campaign does not exist.
+    pub fn get_campaign_balance(env: Env, pool_id: u32) -> u128 {
+        Self::get_total_raised(env, pool_id)
+    }
+
     /// Get the ledger timestamp of the most recent contribution to a pool.
     /// Returns 0 if the pool has never received a donation.
     pub fn get_last_donation_at(env: Env, pool_id: u32) -> u64 {
