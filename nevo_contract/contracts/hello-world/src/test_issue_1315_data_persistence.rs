@@ -28,7 +28,6 @@ fn test_persistence_pool_and_metadata_survive_later_calls() {
         String::from_str(&env, "Original description")
     );
 }
-
 #[test]
 fn test_persistence_saved_metadata_updates_without_corrupting_pool() {
     let env = Env::default();
@@ -119,4 +118,3 @@ fn test_persistence_cleanup_removes_completed_emergency_request() {
         env.storage().persistent().has(&key)
     }));
 }
-

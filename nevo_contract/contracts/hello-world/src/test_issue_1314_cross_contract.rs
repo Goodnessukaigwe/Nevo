@@ -11,7 +11,6 @@ fn create_token(env: &Env, amount: i128, recipient: &Address) -> Address {
     StellarAssetClient::new(env, &token.address()).mint(recipient, &amount);
     token.address()
 }
-
 fn new_pool(env: &Env, client: &ContractClient, creator: &Address) -> u32 {
     client.create_pool(
         creator,
@@ -105,4 +104,3 @@ fn test_cross_contract_token_interface_accepts_repeated_transfers() {
         300i128
     );
 }
-
