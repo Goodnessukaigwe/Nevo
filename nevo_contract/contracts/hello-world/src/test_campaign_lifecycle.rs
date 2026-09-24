@@ -382,6 +382,9 @@ fn test_campaign_token_donations_lifecycle() {
     );
 
     let donor1 = Address::generate(&env);
+    let token = create_token(&env, 1_000_000_000i128, &donor1);
+    client.donate_with_token(&pool_id, &donor1, &token, &300_000_000i128);
+    assert_eq!(client.get_total_raised(&pool_id), 300_000_000u128);
     let donor2 = Address::generate(&env);
     // Mint tokens to donors, not contract
     let token = create_token(&env, 1_000_000_000i128, &donor1);
