@@ -1401,3 +1401,175 @@ fn test_last_donation_at_updates_to_current_ledger_timestamp() {
         "last_donation_at must update to the new ledger timestamp on the next contribution"
     );
 }
+
+// ============= ISSUE #1344: GET_MILESTONES RETRIEVAL AND ORDERING TESTS =============
+//
+// Item 3 from the issue ("get_milestones reflects milestone completion state
+// changes") is skipped: `Milestone` has only an `amount: u128` field, with no
+// completion state anywhere, and no function in the contract marks a
+// milestone complete. There is nothing to change or observe for that case.
+
+/// Test 1: get_milestones returns an empty Vec before setup_application_milestones
+/// has ever been called for that pool/student pair.
+#[test]
+fn test_get_milestones_empty_before_setup() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // No setup_application_milestones call at all for this pair.
+    let milestones = client.get_milestones(&pool_id, &student);
+    assert_eq!(milestones.len(), 0);
+}
+
+/// Test 2: get_milestones returns milestones in the exact order they were
+/// configured, not re-sorted (amounts are deliberately non-monotonic).
+#[test]
+fn test_get_milestones_preserves_configured_order() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    // Deliberately not sorted ascending or descending.
+    let milestones = Vec::from_array(
+        &env,
+        [
+            Milestone { amount: 500_000_000u128 },
+            Milestone { amount: 100_000_000u128 },
+            Milestone { amount: 400_000_000u128 },
+        ],
+    );
+    client.apply_to_pool(&pool_id, &student, &String::from_str(&env, "Application"));
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+
+    let stored = client.get_milestones(&pool_id, &student);
+    assert_eq!(stored.len(), 3);
+    assert_eq!(stored.get(0).unwrap().amount, 500_000_000u128);
+    assert_eq!(stored.get(1).unwrap().amount, 100_000_000u128);
+    assert_eq!(stored.get(2).unwrap().amount, 400_000_000u128);
+}
+
+/// Test 3 (issue item 4): milestones for one (pool_id, student) pair don't
+/// leak into or get confused with another pair's milestones, whether the
+/// pool_id differs, the student differs, or both.
+#[test]
+fn test_get_milestones_isolated_per_pool_and_student() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student_x = Address::generate(&env);
+    let student_y = Address::generate(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool A"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+    let pool_b = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Pool B"),
+        &String::from_str(&env, "Test"),
+        &1_000_000_000u128,
+        &100_000u64,
+    );
+
+    let milestones_ax = Vec::from_array(&env, [Milestone { amount: 1_000_000_000u128 }]);
+    let milestones_ay = Vec::from_array(
+        &env,
+        [Milestone { amount: 300_000_000u128 }, Milestone { amount: 700_000_000u128 }],
+    );
+    let milestones_bx = Vec::from_array(
+        &env,
+        [Milestone { amount: 250_000_000u128 }, Milestone { amount: 750_000_000u128 }],
+    );
+
+    // (pool_a, student_x)
+    client.apply_to_pool(&pool_a, &student_x, &String::from_str(&env, "App"));
+    client.setup_application_milestones(&pool_a, &student_x, &milestones_ax);
+
+    // (pool_a, student_y) -- same pool, different student
+    client.apply_to_pool(&pool_a, &student_y, &String::from_str(&env, "App"));
+    client.setup_application_milestones(&pool_a, &student_y, &milestones_ay);
+
+    // (pool_b, student_x) -- same student, different pool
+    client.apply_to_pool(&pool_b, &student_x, &String::from_str(&env, "App"));
+    client.setup_application_milestones(&pool_b, &student_x, &milestones_bx);
+
+    // (pool_b, student_y) is left untouched entirely.
+
+    assert_eq!(client.get_milestones(&pool_a, &student_x), milestones_ax);
+    assert_eq!(client.get_milestones(&pool_a, &student_y), milestones_ay);
+    assert_eq!(client.get_milestones(&pool_b, &student_x), milestones_bx);
+    assert_eq!(client.get_milestones(&pool_b, &student_y).len(), 0);
+}
+
+/// Test 4 (issue item 5): a large milestone list is stored and read back in
+/// full, with nothing silently dropped. No MAX_MILESTONES or similar cap
+/// exists in the contract, so this uses a reasonably large list rather than
+/// testing at a specific boundary.
+#[test]
+fn test_get_milestones_large_list_not_truncated() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let student = Address::generate(&env);
+
+    const COUNT: u32 = 200;
+    const PER_MILESTONE: u128 = 5_000_000u128;
+    let goal = PER_MILESTONE * (COUNT as u128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &String::from_str(&env, "Large Milestone Pool"),
+        &String::from_str(&env, "Test"),
+        &goal,
+        &100_000u64,
+    );
+
+    let mut milestones: Vec<Milestone> = Vec::new(&env);
+    for _ in 0..COUNT {
+        milestones.push_back(Milestone { amount: PER_MILESTONE });
+    }
+
+    client.apply_to_pool(&pool_id, &student, &String::from_str(&env, "Application"));
+    client.setup_application_milestones(&pool_id, &student, &milestones);
+
+    let stored = client.get_milestones(&pool_id, &student);
+    assert_eq!(stored.len(), COUNT);
+
+    let mut sum: u128 = 0;
+    for i in 0..stored.len() {
+        sum += stored.get(i).unwrap().amount;
+    }
+    assert_eq!(sum, goal);
+}
