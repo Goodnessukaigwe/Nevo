@@ -683,18 +683,6 @@ impl Contract {
             .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
 
         pool.is_closed
-    /// Return campaign ids in creation order.
-    pub fn get_all_campaigns(env: Env) -> Vec<u32> {
-        let count = Self::get_pool_count(env.clone());
-        let mut campaigns = Vec::new(&env);
-        let mut id = 1u32;
-        while id <= count {
-            if env.storage().persistent().has(&id) {
-                campaigns.push_back(id);
-            }
-            id += 1;
-        }
-        campaigns
     }
 
     /// Get the total number of pools.
@@ -1565,6 +1553,20 @@ impl Contract {
         env.events()
             .publish((POOL_STATE_SET, pool_id), (old_state, state));
     }
+
+    /// Return the funding goal for a campaign (pool).
+    ///
+    /// # Panics
+    /// - `ContractError::PoolNotFound` (error #1) if no campaign with `campaign_id` exists.
+    pub fn get_campaign_goal(env: Env, campaign_id: u32) -> u128 {
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get::<_, Pool>(&campaign_id)
+            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
+
+        pool.goal
+    }
 }
 
 mod test;
@@ -1578,7 +1580,5 @@ mod test_withdraw;
 mod test_pool_closure_state_validation;
 mod test_pool_closure_authorization;
 mod test_issue_1290_campaign_creation;
-mod test_campaign_balance;
-mod test_issue_1270_campaign_contribution;
-mod test_issue_1378_emergency_withdrawal_ordering;
-mod test_issue_1377_pool_deadline;
+mod test_issue_1282_campaign_goal_getter;
+mod test_issue_1283_campaign_total_raised;
