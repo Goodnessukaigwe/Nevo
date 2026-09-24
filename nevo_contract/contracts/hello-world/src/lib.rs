@@ -1577,3 +1577,4 @@ mod test_issue_1283_campaign_total_raised;
 mod test_issue_1316_configuration_bounds;
 mod test_issue_1315_data_persistence;
 mod test_issue_1314_cross_contract;
+mod test_issue_1313_gas_optimization;
