@@ -383,6 +383,7 @@ fn test_campaign_token_donations_lifecycle() {
 
     let donor1 = Address::generate(&env);
     let donor2 = Address::generate(&env);
+
     // Mint tokens to donors, not contract
     let token = create_token(&env, 1_000_000_000i128, &donor1);
     // Also give donor2 some tokens
