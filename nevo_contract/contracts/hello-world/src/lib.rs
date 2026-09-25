@@ -131,10 +131,12 @@ pub enum ContractError {
     SchoolNotRegistered = 14,
     /// Pool has already been closed and cannot be closed again.
     PoolAlreadyClosed = 15,
-    /// A campaign with this id is already stored.
-    DuplicateCampaign = 16,
-    /// Deadline is not strictly later than the current ledger timestamp.
-    InvalidDeadline = 17,
+    /// Pool title/name is empty.
+    InvalidPoolName = 16,
+    /// Pool funding goal is zero.
+    InvalidPoolTarget = 17,
+    /// Pool application deadline is already in the past.
+    InvalidPoolDeadline = 18,
 }
 
 // Helper functions for timestamp/deadline edge-case tests
@@ -351,7 +353,7 @@ impl Contract {
         application_deadline: u64,
     ) -> u32 {
         if title.len() == 0 {
-            panic!("Title cannot be empty");
+            env.panic_with_error(ContractError::InvalidPoolName);
         }
         if description.len() == 0 {
             panic!("Description cannot be empty");
@@ -359,8 +361,14 @@ impl Contract {
         if description.len() as u32 > MAX_DESCRIPTION_LENGTH as u32 {
             panic!("Description exceeds maximum length");
         }
+        if goal == 0 {
+            env.panic_with_error(ContractError::InvalidPoolTarget);
+        }
         if application_deadline == 0 {
             panic!("Duration must be greater than zero");
+        }
+        if application_deadline < env.ledger().timestamp() {
+            env.panic_with_error(ContractError::InvalidPoolDeadline);
         }
 
         let pool_count_key = Symbol::new(&env, POOL_COUNT);
@@ -373,7 +381,7 @@ impl Contract {
         let pool_id = pool_count + 1;
         pool_count = pool_id;
 
-        let metadata_key = (Symbol::new(&env, POOL_METADATA_PREFIX), pool_id);
+        let metadata_key = (Symbol::new(&env, "metadata"), pool_id);
         env.storage()
             .persistent()
             .set(&metadata_key, &(title.clone(), description.clone()));
@@ -1712,4 +1720,4 @@ mod test_pool_creation;
 mod test_pool_retrieval;
 mod test_campaign_lifecycle;
 mod test_withdraw;
-mod test_issue_1289_pool_metadata;
+mod test_issue_1288_pool_validation;
