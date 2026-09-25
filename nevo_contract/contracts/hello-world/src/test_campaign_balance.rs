@@ -1,5 +1,5 @@
 #![cfg(test)]
-//! Tests for `get_campaign_balance` edge cases — issue #1061.
+//! Tests for `get_campaign_balance` edge cases — issue #1269 (and #1061).
 //!
 //! Covers:
 //!   1. New campaign returns 0 balance.
@@ -102,6 +102,22 @@ fn test_campaign_balance_nonexistent_campaign_returns_not_found() {
 
     // Pool ID 9999 has never been created — must panic with PoolNotFound.
     let _ = client.get_campaign_balance(&9999u32);
+}
+
+/// Calling `try_get_campaign_balance` with a nonexistent campaign ID returns
+/// `ContractError::PoolNotFound` error variant.
+#[test]
+fn test_campaign_balance_nonexistent_campaign_try_returns_not_found() {
+    let env = Env::default();
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(&env, &contract_id);
+
+    let res = client.try_get_campaign_balance(&9999u32);
+    assert_eq!(
+        res,
+        Err(Ok(ContractError::PoolNotFound)),
+        "Nonexistent campaign must return ContractError::PoolNotFound"
+    );
 }
 
 // ── Test 4: balance equals mathematical sum of all donations ─────────────
