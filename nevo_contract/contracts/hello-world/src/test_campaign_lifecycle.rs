@@ -386,15 +386,12 @@ fn test_campaign_token_donations_lifecycle() {
 
     // Mint tokens to donors, not contract
     let token = create_token(&env, 1_000_000_000i128, &donor1);
-    // Also give donor2 some tokens
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&donor2, &500_000_000i128);
 
-    // First token donation
     client.donate_with_token(&pool_id, &donor1, &token, &200_000_000i128);
     assert_eq!(client.get_total_raised(&pool_id), 200_000_000u128);
 
-    // Second token donation from different donor
     client.donate_with_token(&pool_id, &donor2, &token, &300_000_000i128);
     assert_eq!(client.get_total_raised(&pool_id), goal);
 

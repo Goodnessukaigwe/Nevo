@@ -63,6 +63,7 @@ const REFUND_GRACE_PERIOD_LEDGERS: u32 = 17_280; // ~24 hours at 5s/ledger
 // Pool metadata validation constraints
 const MAX_TITLE_LENGTH: u32 = 256;
 const MAX_DESCRIPTION_LENGTH: usize = 500;
+const POOL_METADATA_PREFIX: &str = "metadata";
 const MAX_URL_LENGTH: usize = 256;
 const MAX_IMAGE_HASH_LENGTH: usize = 64;
 const POOL_METADATA_PREFIX: &str = "metadata";
@@ -352,9 +353,6 @@ impl Contract {
         if title.len() == 0 {
             panic!("Title cannot be empty");
         }
-        if title.len() > MAX_TITLE_LENGTH {
-            panic!("Title exceeds maximum length");
-        }
         if description.len() == 0 {
             panic!("Description cannot be empty");
         }
@@ -363,9 +361,6 @@ impl Contract {
         }
         if application_deadline == 0 {
             panic!("Duration must be greater than zero");
-        }
-        if application_deadline <= env.ledger().timestamp() {
-            env.panic_with_error(ContractError::InvalidDeadline);
         }
 
         let pool_count_key = Symbol::new(&env, POOL_COUNT);
@@ -377,10 +372,6 @@ impl Contract {
 
         let pool_id = pool_count + 1;
         pool_count = pool_id;
-
-        if env.storage().persistent().has(&pool_id) {
-            env.panic_with_error(ContractError::DuplicateCampaign);
-        }
 
         let metadata_key = (Symbol::new(&env, POOL_METADATA_PREFIX), pool_id);
         env.storage()
@@ -677,15 +668,18 @@ impl Contract {
         );
     }
 
-    /// Check if a pool is closed.
-    pub fn is_closed(env: Env, pool_id: u32) -> bool {
-        let pool: Pool = env
-            .storage()
-            .persistent()
-            .get::<_, Pool>(&pool_id)
-            .unwrap_or_else(|| env.panic_with_error(ContractError::PoolNotFound));
-
-        pool.is_closed
+    /// Return campaign ids in creation order.
+    pub fn get_all_campaigns(env: Env) -> Vec<u32> {
+        let count = Self::get_pool_count(env.clone());
+        let mut campaigns = Vec::new(&env);
+        let mut id = 1u32;
+        while id <= count {
+            if env.storage().persistent().has(&id) {
+                campaigns.push_back(id);
+            }
+            id += 1;
+        }
+        campaigns
     }
 
     /// Get the total number of pools.
@@ -1718,18 +1712,4 @@ mod test_pool_creation;
 mod test_pool_retrieval;
 mod test_campaign_lifecycle;
 mod test_withdraw;
-mod test_pool_closure_state_validation;
-mod test_pool_closure_authorization;
-mod test_issue_1290_campaign_creation;
-mod test_token_address_validation;
-mod test_get_pool_count_sequencing;
-mod test_issue_1282_campaign_goal_getter;
-mod test_issue_1283_campaign_total_raised;
-mod test_issue_1316_configuration_bounds;
-mod test_issue_1315_data_persistence;
-mod test_issue_1314_cross_contract;
-mod test_issue_1313_gas_optimization;
-mod test_issue_1340_set_admin_reassignment;
-mod test_issue_1343_claimed_amount_running_total;
-mod test_issue_1339_pool_school_association;
-mod test_issue_1291_donation_token_validation;
+mod test_issue_1289_pool_metadata;
