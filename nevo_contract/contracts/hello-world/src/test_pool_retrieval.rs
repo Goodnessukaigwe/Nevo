@@ -235,8 +235,6 @@ fn test_get_contribution_tracks_individual_amounts() {
 }
 
 /// Test 11: Donor count after multiple unique donors
-/// NOTE: The contract's d_count increments once per donation call AND once
-/// per new unique donor. So 3 unique single-time donors produce d_count = 6.
 #[test]
 fn test_get_donor_count_after_unique_donors() {
     let env = Env::default();
